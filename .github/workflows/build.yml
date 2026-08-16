@@ -1,207 +1,39 @@
-name: Universal Cloud Compiler
+name: Build Android App
 
 on:
-  workflow_dispatch:
-    inputs:
-      project_url:
-        description: 'URL do arquivo ZIP do projeto'
-        required: true
-      target_platform:
-        description: 'Plataforma ou Modo (auto, android, flutter, node, python, rust, go, cpp, java)'
-        required: false
-        default: 'auto'
+  push:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    
     steps:
-    - name: Baixar e Extrair Projeto
-      run: |
-        echo "=== [1/5] BAIXANDO PROJETO ==="
-        echo "URL: ${{ github.event.inputs.project_url }}"
-        curl -L -A "Mozilla/5.0" "${{ github.event.inputs.project_url }}" -o project.zip
-        mkdir -p project_src
-        unzip -q -o project.zip -d project_src || true
-        
-        cd project_src
-        # Se os arquivos estiverem dentro de uma subpasta única, sobe para a raiz
-        ROOT_FILES=$(ls -1 | wc -l)
-        if [ "$ROOT_FILES" -eq "1" ] && [ -d "$(ls -1)" ]; then
-          SINGLE_DIR=$(ls -1)
-          echo "Movendo arquivos de $SINGLE_DIR para raiz..."
-          mv $SINGLE_DIR/* . 2>/dev/null || true
-          mv $SINGLE_DIR/.* . 2>/dev/null || true
-          rm -rf "$SINGLE_DIR"
-        fi
-        echo "Arquivos extraídos com sucesso:"
-        ls -la
-
-    - name: Detectar Tipo de Projeto e Linguagem
-      id: detector
-      run: |
-        cd project_src
-        echo "=== [2/5] DETECTANDO AMBIENTE DE EXECUÇÃO ==="
-        TARGET="${{ github.event.inputs.target_platform }}"
-        if [ -z "$TARGET" ]; then TARGET="auto"; fi
-        
-        DETECTED="generic"
-        
-        if [ "$TARGET" != "auto" ]; then
-          DETECTED="$TARGET"
-        elif [ -f "pubspec.yaml" ]; then
-          DETECTED="flutter"
-        elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ] || [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ] || [ -f "AndroidManifest.xml" ] || [ -d "app/src/main" ]; then
-          DETECTED="android"
-        elif [ -f "Cargo.toml" ]; then
-          DETECTED="rust"
-        elif [ -f "go.mod" ] || ls *.go 1> /dev/null 2>&1; then
-          DETECTED="go"
-        elif [ -f "package.json" ]; then
-          DETECTED="node"
-        elif [ -f "pom.xml" ]; then
-          DETECTED="maven"
-        elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ] || ls *.py 1> /dev/null 2>&1; then
-          DETECTED="python"
-        elif [ -f "CMakeLists.txt" ] || [ -f "Makefile" ] || ls *.cpp *.c 1> /dev/null 2>&1; then
-          DETECTED="cpp"
-        fi
-        
-        echo "Linguagem detectada: $DETECTED"
-        echo "type=$DETECTED" >> $GITHUB_OUTPUT
-
-    - name: Configurar Java e Android SDK
-      if: steps.detector.outputs.type == 'android' || steps.detector.outputs.type == 'maven' || steps.detector.outputs.type == 'java'
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-
-    - name: Configurar Android SDK Tools
-      if: steps.detector.outputs.type == 'android'
-      uses: android-actions/setup-android@v3
-
-    - name: Configurar Node.js (Web/JS/TS)
-      if: steps.detector.outputs.type == 'node'
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - name: Configurar Python
-      if: steps.detector.outputs.type == 'python'
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Configurar Go
-      if: steps.detector.outputs.type == 'go'
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.22'
-
-    - name: Configurar Flutter
-      if: steps.detector.outputs.type == 'flutter'
-      uses: subosito/flutter-action@v2
-      with:
-        channel: 'stable'
-
-    - name: Executar Compilação Universal
-      run: |
-        echo "=== [3/5] COMPILANDO (${{ steps.detector.outputs.type }}) ==="
-        cd project_src
-        mkdir -p build_output
-        TYPE="${{ steps.detector.outputs.type }}"
-        
-        case "$TYPE" in
-          android)
-            echo "sdk.dir=$ANDROID_HOME" > local.properties
-            if [ ! -f "./gradlew" ]; then
-              echo "Gerando Gradle Wrapper..."
-              gradle wrapper || true
-            fi
-            chmod +x ./gradlew 2>/dev/null || true
-            ./gradlew assembleDebug --no-daemon --stacktrace || ./gradlew build --no-daemon
-            ;;
-          flutter)
-            flutter pub get
-            flutter build apk --debug || flutter build apk --release || true
-            ;;
-          node)
-            npm install --legacy-peer-deps || yarn install || pnpm install || true
-            npm run build --if-present || npx vite build || npx tsc || true
-            ;;
-          rust)
-            cargo build --release
-            ;;
-          go)
-            go mod tidy 2>/dev/null || true
-            go build -v -o build_output/app . 2>/dev/null || go build -o build_output/app *.go
-            ;;
-          python)
-            pip install --upgrade pip
-            if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
-            python -m compileall .
-            pip install pyinstaller || true
-            if [ -f "main.py" ]; then
-              pyinstaller --onefile main.py --distpath build_output/ || true
-            elif [ -f "app.py" ]; then
-              pyinstaller --onefile app.py --distpath build_output/ || true
-            fi
-            ;;
-          maven)
-            mvn clean package -DskipTests
-            ;;
-          cpp)
-            if [ -f "CMakeLists.txt" ]; then
-              cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
-            elif [ -f "Makefile" ]; then
-              make
-            elif ls *.cpp 1> /dev/null 2>&1; then
-              g++ -O3 -o build_output/app *.cpp
-            elif ls *.c 1> /dev/null 2>&1; then
-              gcc -O3 -o build_output/app *.c
-            fi
-            ;;
-          *)
-            echo "Executando build script padrão..."
-            if [ -f "build.sh" ]; then
-              chmod +x build.sh && ./build.sh
-            elif [ -f "Makefile" ]; then
-              make
-            fi
-            ;;
-        esac
-
-    - name: Organizar Artefatos Compilados
-      if: always()
-      run: |
-        echo "=== [4/5] COLETANDO ARTEFATOS ==="
-        cd project_src
-        mkdir -p dist_release
-        
-        # Coleta APKs e Bundles
-        find . -type f -name "*.apk" -exec cp {} dist_release/ \; 2>/dev/null || true
-        find . -type f -name "*.aab" -exec cp {} dist_release/ \; 2>/dev/null || true
-        
-        # Coleta Binários e Executáveis
-        if [ -d "target/release" ]; then cp -r target/release/* dist_release/ 2>/dev/null || true; fi
-        if [ -d "build_output" ]; then cp -r build_output/* dist_release/ 2>/dev/null || true; fi
-        if [ -d "dist" ]; then cp -r dist/* dist_release/ 2>/dev/null || true; fi
-        if [ -d "build/libs" ]; then cp -r build/libs/* dist_release/ 2>/dev/null || true; fi
-        if [ -d "build/outputs" ]; then cp -r build/outputs/* dist_release/ 2>/dev/null || true; fi
-        
-        echo "Artefatos compilados:"
-        ls -la dist_release/
-
-    - name: Publicar Artefatos no GitHub
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: compiled-app-output
-        path: |
-          project_src/dist_release/
-          project_src/**/build/outputs/apk/**/*.apk
-          project_src/**/*.apk
-          project_src/**/*.aab
-          project_src/build_output/
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          
+      - name: Unzip Project
+        run: |
+          unzip project.zip -d android_project
+          rm project.zip
+          
+      - name: Make Gradle Executable
+        run: |
+          cd android_project
+          chmod +x ./gradlew || true
+          
+      - name: Build APK
+        run: |
+          cd android_project
+          ./gradlew assembleDebug
+          
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: android_project/app/build/outputs/apk/debug/*.apk
