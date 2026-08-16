@@ -1,0 +1,52 @@
+name: Universal Build
+on:
+  push:
+    branches:
+      - 'build-1786902193876'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Unzip project
+        run: unzip project.zip -d project_src
+      - name: Detect Environment & Java Version
+        id: detect-env
+        run: |
+          cd project_src
+          JAVA_VER="17"
+          if [ -f "gradle/wrapper/gradle-wrapper.properties" ]; then
+            GRADLE_VER=$(grep distributionUrl gradle/wrapper/gradle-wrapper.properties | grep -oE 'gradle-[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "8")
+            echo "Detected Gradle major version: $GRADLE_VER"
+            if [ "$GRADLE_VER" -lt "5" ]; then
+              JAVA_VER="8"
+            elif [ "$GRADLE_VER" -lt "7" ]; then
+              JAVA_VER="11"
+            elif [ "$GRADLE_VER" -lt "8" ]; then
+              JAVA_VER="11"
+            else
+              JAVA_VER="17"
+            fi
+          fi
+          echo "java_version=$JAVA_VER" >> $GITHUB_OUTPUT
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ steps.detect-env.outputs.java_version }}
+          distribution: 'temurin'
+      - name: Prepare Gradle Wrapper
+        run: |
+          cd project_src
+          if [ ! -f "gradlew" ]; then
+            echo "gradlew not found. Trying to generate..."
+            gradle wrapper || true
+          fi
+          chmod +x ./gradlew || true
+      - name: Build with Gradle
+        run: cd project_src && ./gradlew assembleDebug --stacktrace
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-apk
+          path: project_src/**/build/outputs/apk/**/*.apk
