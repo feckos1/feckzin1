@@ -1,64 +1,39 @@
-name: 🌙 Nightly Build
+name: Build Android App
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - master
-    paths:
-      - "app/**"
+    branches: [ "main" ]
 
 jobs:
-  buildAndroid:
-    permissions: write-all
-    name: 🤖📦 Build Android APK
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: ⬇️ Checkout repository
-        uses: actions/checkout@v3
-
-      - name: ⚙️ Setup Java
-        uses: actions/setup-java@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          java-version: "21.x"
-          cache: "gradle"
-          distribution: "adopt"
-        id: java
-
-      - name: 🔐 Retrieve base64 keystore and decode it to a file
-        id: write_file
-        uses: timheuer/base64-to-file@v1.2
-        with:
-          fileName: "android-keystore.jks"
-          fileDir: "${{ github.workspace }}/"
-          encodedString: ${{ secrets.KEYSTORE_FILE_BASE64 }}
-
-      - name: 📝🔐 Create keystore.properties file
-        env:
-          KEYSTORE_PROPERTIES_PATH: ${{ github.workspace }}/key.properties
+          distribution: 'temurin'
+          java-version: '17'
+          
+      - name: Unzip Project
         run: |
-          echo "storeFile=${{ github.workspace }}/android-keystore.jks" > $KEYSTORE_PROPERTIES_PATH
-          echo "keyAlias=${{ secrets.KEYSTORE_KEY_ALIAS }}" >> $KEYSTORE_PROPERTIES_PATH
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> $KEYSTORE_PROPERTIES_PATH
-          echo "keyPassword=${{ secrets.KEYSTORE_KEY_PASSWORD }}" >> $KEYSTORE_PROPERTIES_PATH
-
-      - name: 🤖📦 Create Android release
+          unzip project.zip -d android_project
+          rm project.zip
+          
+      - name: Make Gradle Executable
         run: |
-          ./gradlew app:assembleRelease
-
-      - name: 📝 Generate build date
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-      - name: 📝 Generate SHA-256
+          cd android_project
+          chmod +x ./gradlew || true
+          
+      - name: Build APK
         run: |
-          cd app/build/outputs/apk/release/
-          sha256sum *.apk > SHA256SUMS.txt
-      - name: "Echo SHA-256 sums"
-        run: cat app/build/outputs/apk/release/SHA256SUMS.txt
-      - name: 📦 Upload Build Artifact
+          cd android_project
+          ./gradlew assembleDebug
+          
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          # Include both the APK and the SHA-256 sums
-          path: app/build/outputs/apk/release/
-          retention-days: 7
+          name: app-debug
+          path: android_project/app/build/outputs/apk/debug/*.apk

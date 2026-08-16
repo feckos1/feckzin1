@@ -1,3 +1,0 @@
-User-agent: *
-Allow: /
-Sitemap: https://samolego.github.io/Canta/sitemap.xml
