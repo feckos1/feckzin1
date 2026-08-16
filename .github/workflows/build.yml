@@ -16,10 +16,18 @@ jobs:
       uses: actions/checkout@v4
       
     - name: Baixar o Projeto do Celular
-      run: curl -L "${{ github.event.inputs.project_url }}" -o project.zip
+      run: |
+        echo "Baixando de: ${{ github.event.inputs.project_url }}"
+        curl -L -A "Mozilla/5.0" "${{ github.event.inputs.project_url }}" -o project.zip
+        file project.zip
+        ls -lh project.zip
       
     - name: Extrair Arquivos
-      run: unzip project.zip -d project_src
+      run: |
+        mkdir -p project_src
+        unzip -o project.zip -d project_src || (unzip -o project.zip && mv * project_src/ 2>/dev/null || true)
+        echo "Arquivos extraídos:"
+        ls -la project_src
       
     - name: Configurar Java 17
       uses: actions/setup-java@v4
@@ -28,13 +36,28 @@ jobs:
         distribution: 'temurin'
         
     - name: Dar permissão ao Gradle
-      run: cd project_src && chmod +x gradlew
+      run: |
+        cd project_src
+        if [ ! -f "gradlew" ]; then
+          SUBDIR=$(find . -maxdepth 2 -name "gradlew" -printf "%h\n" | head -n 1)
+          if [ -n "$SUBDIR" ]; then
+            cp -rn $SUBDIR/* .
+          fi
+        fi
+        chmod +x gradlew || true
       
-    - name: Compilar o APK
-      run: cd project_src && ./gradlew assembleDebug
+    - name: Compilar o APK (Debug)
+      run: |
+        cd project_src
+        if [ -f "./gradlew" ]; then
+          ./gradlew assembleDebug --stacktrace
+        else
+          gradle assembleDebug --stacktrace
+        fi
       
     - name: Salvar o APK gerado
       uses: actions/upload-artifact@v4
+      if: always()
       with:
         name: app-debug-apk
-        path: project_src/app/build/outputs/apk/debug/*.apk
+        path: project_src/**/build/outputs/apk/debug/*.apk
