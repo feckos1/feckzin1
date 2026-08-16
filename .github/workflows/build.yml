@@ -12,47 +12,47 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout do Repositório
-      uses: actions/checkout@v4
-      
-    - name: Baixar o Projeto do Celular
+    - name: Baixar e Preparar Projeto
       run: |
-        echo "Baixando de: ${{ github.event.inputs.project_url }}"
+        echo "Baixando código de: ${{ github.event.inputs.project_url }}"
         curl -L -A "Mozilla/5.0" "${{ github.event.inputs.project_url }}" -o project.zip
-        file project.zip
-        ls -lh project.zip
-      
-    - name: Extrair Arquivos
-      run: |
         mkdir -p project_src
-        unzip -o project.zip -d project_src || (unzip -o project.zip && mv * project_src/ 2>/dev/null || true)
-        echo "Arquivos extraídos:"
-        ls -la project_src
+        unzip -o project.zip -d project_src || true
+        
+        # Se os arquivos estiverem em uma subpasta raiz, traz para a raiz
+        cd project_src
+        if [ ! -f "build.gradle" ] && [ ! -f "build.gradle.kts" ] && [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
+          INNER_DIR=$(find . -maxdepth 2 -name "settings.gradle*" -printf "%h\n" | head -n 1)
+          if [ -n "$INNER_DIR" ] && [ "$INNER_DIR" != "." ]; then
+            echo "Movendo arquivos de $INNER_DIR para a raiz"
+            cp -r $INNER_DIR/* .
+          fi
+        fi
+        echo "Estrutura do projeto:"
+        ls -la
       
     - name: Configurar Java 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
+
+    - name: Configurar Android SDK
+      uses: android-actions/setup-android@v3
         
-    - name: Dar permissão ao Gradle
+    - name: Compilar APK com Gradle
       run: |
         cd project_src
-        if [ ! -f "gradlew" ]; then
-          SUBDIR=$(find . -maxdepth 2 -name "gradlew" -printf "%h\n" | head -n 1)
-          if [ -n "$SUBDIR" ]; then
-            cp -rn $SUBDIR/* .
-          fi
-        fi
-        chmod +x gradlew || true
-      
-    - name: Compilar o APK (Debug)
-      run: |
-        cd project_src
+        echo "sdk.dir=$ANDROID_HOME" > local.properties
+        
         if [ -f "./gradlew" ]; then
-          ./gradlew assembleDebug --stacktrace
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
         else
-          gradle assembleDebug --stacktrace
+          echo "Gerando Gradle Wrapper..."
+          gradle wrapper
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
         fi
       
     - name: Salvar o APK gerado
@@ -60,4 +60,6 @@ jobs:
       if: always()
       with:
         name: app-debug-apk
-        path: project_src/**/build/outputs/apk/debug/*.apk
+        path: |
+          project_src/**/build/outputs/apk/debug/*.apk
+          project_src/**/*.apk
